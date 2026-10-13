@@ -1,0 +1,975 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>音声認識ベンチ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* Layout: 左に「原稿と設定」、右に「認識中のテキストと計測」、下に全試行の比較表 */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --fg: #16202b;
+  --muted: #5a6776;
+  --line: #d8dfe7;
+  --accent: #1c5ec2;
+  --accent-weak: #e5edfa;
+  --on-accent: #ffffff;
+  --good: #1d7c4d;
+  --warn: #9a6100;
+  --bad: #c03737;
+  --ins-bg: #ddf2e5;
+  --del-bg: #fbe3e3;
+  --sub-bg: #fcefd3;
+  --interim: #8793a1;
+  --rec: #d23b3b;
+  --font-body: "IBM Plex Sans JP", "Hiragino Sans", "Yu Gothic UI", Meiryo, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1319; --surface: #161d26; --fg: #e3e8ee; --muted: #93a0ae; --line: #2a3440;
+    --accent: #72a5ff; --accent-weak: #1b2a42; --on-accent: #0b1220;
+    --good: #4cc38a; --warn: #e2a93e; --bad: #f07272;
+    --ins-bg: #153526; --del-bg: #3d1c1f; --sub-bg: #3a2e13; --interim: #6f7c8a; --rec: #f06060;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1319; --surface: #161d26; --fg: #e3e8ee; --muted: #93a0ae; --line: #2a3440;
+  --accent: #72a5ff; --accent-weak: #1b2a42; --on-accent: #0b1220;
+  --good: #4cc38a; --warn: #e2a93e; --bad: #f07272;
+  --ins-bg: #153526; --del-bg: #3d1c1f; --sub-bg: #3a2e13; --interim: #6f7c8a; --rec: #f06060;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.7 var(--font-body);
+  padding-inline: 16px; padding-block: 20px 48px;
+}
+.wrap { max-width: 1240px; margin-inline: auto; display: grid; gap: 20px; }
+h1, h2, h3 { margin: 0; line-height: 1.35; text-wrap: balance; }
+h1 { font-size: 22px; font-weight: 700; }
+h2 { font-size: 16px; font-weight: 700; }
+h3 { font-size: 13px; font-weight: 500; color: var(--muted); letter-spacing: .04em; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.envbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  font-size: 12.5px; white-space: nowrap;
+}
+.chip.good { color: var(--good); border-color: currentColor; }
+.chip.bad { color: var(--bad); border-color: currentColor; }
+.chip.warn { color: var(--warn); border-color: currentColor; }
+
+.grid { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 960px) { .grid { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); } }
+
+.panel {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 18px; display: grid; gap: 14px; align-content: start; min-width: 0;
+}
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.field { display: grid; gap: 4px; min-width: 0; }
+label.lbl { font-size: 12.5px; color: var(--muted); letter-spacing: .03em; }
+select, input[type=text], input[type=number], textarea {
+  font: inherit; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; width: 100%;
+}
+textarea { resize: vertical; min-height: 4.5em; line-height: 1.6; }
+select:focus-visible, input:focus-visible, textarea:focus-visible, button:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.read-text {
+  font-size: 19px; line-height: 1.9; padding: 14px 16px; border-radius: 8px;
+  background: var(--accent-weak); border: 1px solid var(--line);
+}
+.read-text .filler { text-decoration: underline wavy var(--warn); text-underline-offset: 5px; }
+.checks { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.checks label { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; }
+.checks input { margin-top: 5px; }
+.checks .disabled { color: var(--muted); }
+
+button {
+  font: inherit; font-size: 14px; cursor: pointer; border-radius: 6px;
+  padding: 7px 14px; border: 1px solid var(--line); background: var(--surface); color: var(--fg);
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 500; }
+button.stop { background: var(--rec); border-color: var(--rec); color: #fff; font-weight: 500; }
+.bigbtn { font-size: 16px; padding: 10px 22px; }
+
+.status { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); flex: none; }
+.dot.on { background: var(--rec); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .dot.on { animation: none; } }
+
+.live {
+  min-height: 7.5em; padding: 14px 16px; border-radius: 8px; border: 1px dashed var(--line);
+  font-size: 18px; line-height: 1.9; overflow-wrap: anywhere;
+}
+.live .interim { color: var(--interim); }
+.live .placeholder { color: var(--muted); font-size: 14px; }
+
+.metrics { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.metric { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 2px; align-content: start; }
+.metric .k { font-size: 12px; color: var(--muted); letter-spacing: .03em; }
+.metric .v { font-family: var(--font-mono); font-size: 20px; font-variant-numeric: tabular-nums; line-height: 1.3; }
+.metric .s { font-size: 12px; color: var(--muted); }
+.v.good { color: var(--good); } .v.warn { color: var(--warn); } .v.bad { color: var(--bad); }
+
+.diff { font-size: 16px; line-height: 2; overflow-wrap: anywhere; padding: 12px 14px; border-radius: 8px; background: var(--bg); }
+.diff ins { background: var(--ins-bg); text-decoration: none; border-bottom: 2px solid var(--good); }
+.diff del { background: var(--del-bg); color: var(--bad); }
+.diff .sub { background: var(--sub-bg); border-bottom: 2px solid var(--warn); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: var(--muted); }
+.legend span { display: inline-flex; gap: 6px; align-items: center; }
+.sw { display: inline-block; width: 14px; height: 10px; border-radius: 2px; }
+
+.log {
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.6; max-height: 220px; overflow: auto;
+  background: var(--bg); border-radius: 8px; padding: 8px 10px; margin: 0; white-space: pre-wrap;
+}
+details > summary { cursor: pointer; font-size: 14px; color: var(--muted); }
+details[open] > summary { margin-bottom: 8px; }
+
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: 12.5px; background: var(--bg); position: sticky; top: 0; }
+td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+td.good { color: var(--good); } td.warn { color: var(--warn); } td.bad { color: var(--bad); }
+tr:last-child td { border-bottom: 0; }
+td.hyp { white-space: normal; min-width: 18em; max-width: 34em; font-size: 13px; }
+.empty { padding: 18px; color: var(--muted); font-size: 14px; }
+.notice { font-size: 13.5px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }
+.notice.bad { border-color: var(--bad); color: var(--bad); }
+.help { display: grid; gap: 8px; font-size: 14px; max-width: 70em; }
+.help ol, .help ul { margin: 0; padding-left: 1.4em; display: grid; gap: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div style="display:grid;gap:4px;min-width:0">
+      <h1>音声認識ベンチ</h1>
+      <p class="muted small">Web Speech API（日本語）を、同じ原稿でブラウザごとに測るツールです。誤字脱字・句読点・フィラー・速度・連続認識の安定性を記録します。</p>
+    </div>
+    <div class="envbar" id="envbar"></div>
+  </header>
+
+  <div class="grid">
+    <!-- 左：原稿と設定 -->
+    <section class="panel" aria-labelledby="h-script">
+      <h2 id="h-script">原稿と設定</h2>
+
+      <div class="field">
+        <label class="lbl" for="scriptSel">原稿</label>
+        <select id="scriptSel"></select>
+        <p class="small muted" id="scriptNote"></p>
+      </div>
+
+      <div class="field">
+        <h3>読み上げる文（波線＝フィラー。正解からは除外）</h3>
+        <div class="read-text" id="readView"></div>
+      </div>
+
+      <details id="editBox">
+        <summary>原稿を編集する（自作の文で試す場合）</summary>
+        <div style="display:grid;gap:10px">
+          <div class="field">
+            <label class="lbl" for="readText">読み上げる文（フィラーは［えーと］のように［］で囲む）</label>
+            <textarea id="readText" rows="3"></textarea>
+          </div>
+          <p class="small muted">正解テキストは、読み上げる文から［］の部分を除いて自動で作ります。句読点の位置も正解として扱います。</p>
+        </div>
+      </details>
+
+      <div class="checks">
+        <label><input type="checkbox" id="optContinuous" checked> 連続認識（continuous）</label>
+        <label><input type="checkbox" id="optInterim" checked> 途中結果を表示（interimResults）</label>
+        <label><input type="checkbox" id="optRestart" checked> 自動終了したら再開する</label>
+        <label id="lblLocal"><input type="checkbox" id="optLocal"> 端末内で処理（processLocally）</label>
+      </div>
+
+      <div class="row">
+        <div class="field" style="flex:1 1 180px">
+          <label class="lbl" for="langSel">言語</label>
+          <select id="langSel">
+            <option value="ja-JP" selected>ja-JP（日本語）</option>
+            <option value="">指定しない（ブラウザ任せ）</option>
+          </select>
+        </div>
+        <div class="field" style="flex:2 1 220px">
+          <label class="lbl" for="labelIn">記録名（ブラウザ名・端末など）</label>
+          <input type="text" id="labelIn">
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="lbl" for="phrasesIn">認識させたい語（phrases・カンマ区切り・対応ブラウザのみ）</label>
+        <input type="text" id="phrasesIn" placeholder="例：Slack, Google, PDF">
+      </div>
+
+      <div class="field" id="localBox">
+        <div class="row">
+          <button id="btnCheckLocal" type="button">端末内モデルを確認</button>
+          <button id="btnInstallLocal" type="button" hidden>日本語モデルをダウンロード</button>
+          <span class="small muted" id="localStatus">Chrome 139 以降の端末内認識（ja-JP）の状態を確認します。</span>
+        </div>
+      </div>
+
+      <details>
+        <summary>測り方のコツ</summary>
+        <div class="help">
+          <ol>
+            <li>原稿 A・B・C の 3 本を、同じマイク・同じ部屋で、各ブラウザ 3 回ずつ読むと差が見えやすくなります（1 ブラウザあたり約 5 分）。</li>
+            <li>読む人の揺れをなくすなら、同じ録音を別の端末から再生してマイクに聞かせるか、仮想オーディオ（BlackHole など）を入力にします。</li>
+            <li>読み終えたら 2 秒ほど待ってから「停止」を押してください。停止後に確定する分も計測します。</li>
+            <li>他のブラウザの結果は「書き出し（JSON）」で保存し、ここで「読み込み」すると 1 つの表で比べられます。</li>
+          </ol>
+          <p class="small muted">音声は各社のサーバー（Google・Microsoft・Apple）に送られます。個人情報や社外秘の内容は読み上げないでください。</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- 右：認識と計測 -->
+    <section class="panel" aria-labelledby="h-run">
+      <div class="row" style="justify-content:space-between">
+        <h2 id="h-run">認識と計測</h2>
+        <div class="status"><span class="dot" id="dot"></span><span id="statusText">待機中</span></div>
+      </div>
+
+      <div class="row">
+        <button class="primary bigbtn" id="btnStart" type="button">録音して認識</button>
+        <button class="stop bigbtn" id="btnStop" type="button" disabled>停止して評価</button>
+        <button id="btnAbort" type="button" disabled>破棄</button>
+      </div>
+
+      <div id="notice" class="notice" hidden></div>
+
+      <div class="field">
+        <h3>認識結果（灰色＝途中結果）</h3>
+        <div class="live" id="live"><span class="placeholder">「録音して認識」を押し、左の文を読み上げてください。</span></div>
+      </div>
+
+      <div id="resultBox" style="display:grid;gap:14px">
+        <h3>この試行の評価</h3>
+        <div class="metrics" id="metrics"></div>
+        <div class="field">
+          <div class="legend">
+            <span><i class="sw" style="background:var(--sub-bg)"></i>誤字（置き換わり）</span>
+            <span><i class="sw" style="background:var(--del-bg)"></i>脱字（抜け）</span>
+            <span><i class="sw" style="background:var(--ins-bg)"></i>余分な文字</span>
+          </div>
+          <div class="diff" id="diff"><span class="muted small">試行が終わると、正解との違いをここに表示します。</span></div>
+        </div>
+      </div>
+
+      <details>
+        <summary>イベントの記録（ミリ秒は開始ボタンからの経過）</summary>
+        <pre class="log" id="log"></pre>
+      </details>
+    </section>
+  </div>
+
+  <!-- 下：比較表 -->
+  <section class="panel" aria-labelledby="h-sum">
+    <div class="row" style="justify-content:space-between">
+      <h2 id="h-sum">ブラウザ別のまとめ</h2>
+      <div class="row">
+        <button id="btnCopySheet" class="primary" type="button">スプシ用にコピー</button>
+        <button id="btnExportJson" type="button">書き出し（JSON）</button>
+        <button id="btnExportCsv" type="button">書き出し（CSV）</button>
+        <label class="small" style="display:inline-flex">
+          <span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">結果ファイルを読み込む</span>
+          <input type="file" id="importIn" accept=".json,application/json" multiple hidden>
+          <button id="btnImport" type="button">読み込み</button>
+        </label>
+        <button id="btnClear" type="button">記録を消去</button>
+      </div>
+    </div>
+    <div class="tablewrap" id="summaryWrap"></div>
+    <h2>全試行</h2>
+    <div class="tablewrap" id="runsWrap"></div>
+    <p class="small muted">誤字脱字率＝正解との文字の差（置換＋脱字＋余分）÷正解の文字数。句読点・空白・フィラーを除いて比べます。句読点 F1 は、正解と同じ位置（前後 1 文字まで）に入ったかで判定します。</p>
+  </section>
+
+</div>
+
+<script>
+"use strict";
+
+/* ---------- 原稿 ---------- */
+const SCRIPTS = [
+  { id: "talk", name: "A. 会話（句読点・疑問文・フィラー）",
+    note: "話し言葉のテンポで読みます。波線の言葉もそのまま声に出してください。「、」「。」「？」「！」とフィラーの扱いを見ます。",
+    read: "［えーと］、来週の打ち合わせについて確認させてください。会議室はもう予約できましたか？［あのー］、資料はまだ準備中なので、金曜日までには共有します。急な変更に対応していただいて、本当に助かりました！" },
+  { id: "facts", name: "B. 数字・英字・固有名詞",
+    note: "日付・金額・件数と、英字のサービス名を含む文です。漢数字と算用数字の違いも誤字として数えます。",
+    read: "2026年4月1日から、新しいシステムの利用料金が月額3500円に変わります。対象は約1200社で、問い合わせはメールかSlackで受け付けています。詳しい内容は、Googleドライブに置いたPDFを確認してください。" },
+  { id: "long", name: "C. 長文（連続認識）",
+    note: "文と文の間で 1〜2 秒ずつ間を置いて読みます。途中で認識が切れないか、長い文で精度が落ちないかを見ます。",
+    read: "最近は、在宅勤務と出社を組み合わせた働き方が広がっています。通勤の時間が減ったことで、家族と過ごす時間や、自分のための時間を確保しやすくなりました。一方で、チームの一体感をどう保つかは、多くの職場に共通する課題です。［えー］、定期的に顔を合わせる機会をつくるなど、それぞれの職場に合ったやり方を探していく必要があるでしょう。" },
+  { id: "custom", name: "自作の原稿", note: "下の「原稿を編集する」で文を入力してください。", read: "" },
+];
+
+/* ---------- 文字列処理 ---------- */
+const PUNCT = { "、": "、", ",": "、", "。": "。", ".": "。", "?": "？", "!": "！" };
+const SKIP = /[\s「」『』（）()［］\[\]【】・:：;；"'“”‘’…]/u;
+const FILLER_RE = /(?:えーっと|えーと|ええと|えっと|あのー+|あのう|あの〜|うーん|んー+|えー+|エーット|エート|エー+|アノー+)[、,]?\s*/gu;
+
+function refFromRead(read) { return read.replace(/［[^］]*］[、,]?/g, ""); }
+function countMarkedFillers(read) { return (read.match(/［[^］]*］/g) || []).length; }
+
+// 句読点・空白を外した文字列と、句読点の位置を返す
+function analyze(s) {
+  const arr = Array.from((s || "").normalize("NFKC"));
+  const chars = [], puncts = [];
+  for (let i = 0; i < arr.length; i++) {
+    const c = arr[i].toLowerCase();
+    const prev = arr[i - 1] || "", next = arr[i + 1] || "";
+    const between = /\d/.test(prev) && /\d/.test(next);
+    if ((c === "," ) && between) continue;           // 1,500 の桁区切り
+    if (c === "." && between) { chars.push(c); continue; } // 3.5 の小数点
+    if (PUNCT[c]) { puncts.push({ pos: chars.length, type: PUNCT[c] }); continue; }
+    if (SKIP.test(c)) continue;
+    chars.push(c);
+  }
+  return { chars, puncts };
+}
+
+function align(a, b) {
+  const n = a.length, m = b.length;
+  const d = [];
+  for (let i = 0; i <= n; i++) { d.push(new Uint32Array(m + 1)); d[i][0] = i; }
+  for (let j = 0; j <= m; j++) d[0][j] = j;
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      const c = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + c);
+    }
+  }
+  const ops = [];
+  let i = n, j = m;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && d[i][j] === d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)) {
+      ops.push({ t: a[i - 1] === b[j - 1] ? "eq" : "sub", r: a[i - 1], h: b[j - 1] }); i--; j--;
+    } else if (i > 0 && d[i][j] === d[i - 1][j] + 1) {
+      ops.push({ t: "del", r: a[i - 1] }); i--;
+    } else {
+      ops.push({ t: "ins", h: b[j - 1] }); j--;
+    }
+  }
+  ops.reverse();
+  return { dist: d[n][m], ops };
+}
+
+function punctScore(ref, hyp, ops) {
+  // 認識結果の文字境界 → 正解の文字境界 の対応表
+  const map = [0];
+  let i = 0, j = 0;
+  for (const op of ops) {
+    if (op.t === "del") { i++; map[j] = i; }
+    else if (op.t === "ins") { j++; map[j] = i; }
+    else { i++; j++; map[j] = i; }
+  }
+  const used = new Set();
+  let tp = 0, typeOk = 0;
+  for (const p of hyp.puncts) {
+    const at = map[Math.min(p.pos, map.length - 1)] ?? 0;
+    let best = -1, bestDist = 2;
+    ref.puncts.forEach((r, k) => {
+      if (used.has(k)) return;
+      const dd = Math.abs(r.pos - at);
+      if (dd < bestDist) { best = k; bestDist = dd; }
+    });
+    if (best >= 0) { used.add(best); tp++; if (ref.puncts[best].type === p.type) typeOk++; }
+  }
+  const P = hyp.puncts.length ? tp / hyp.puncts.length : null;
+  const R = ref.puncts.length ? tp / ref.puncts.length : null;
+  const F1 = P != null && R != null && P + R > 0 ? 2 * P * R / (P + R) : (ref.puncts.length ? 0 : null);
+  const byType = {};
+  for (const p of hyp.puncts) byType[p.type] = (byType[p.type] || 0) + 1;
+  return { ref: ref.puncts.length, hyp: hyp.puncts.length, tp, typeOk, P, R, F1, byType };
+}
+
+function evaluate(readText, hypRaw) {
+  const refText = refFromRead(readText);
+  const hypNorm = (hypRaw || "").normalize("NFKC");
+  const fillerHits = hypNorm.match(FILLER_RE) || [];
+  const hypClean = hypNorm.replace(FILLER_RE, "");
+  const ref = analyze(refText), hyp = analyze(hypClean);
+  const { dist, ops } = align(ref.chars, hyp.chars);
+  const counts = { sub: 0, del: 0, ins: 0 };
+  for (const op of ops) if (op.t !== "eq") counts[op.t]++;
+  return {
+    refText, hypClean,
+    refLen: ref.chars.length,
+    cer: ref.chars.length ? dist / ref.chars.length : null,
+    ...counts, ops,
+    punct: punctScore(ref, hyp, ops),
+    fillers: { spoken: countMarkedFillers(readText), out: fillerHits.length, words: fillerHits.map(s => s.replace(/[、,\s]/g, "")) },
+  };
+}
+
+/* ---------- 環境の検出 ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+
+function detectBrowser() {
+  const ua = navigator.userAgent;
+  const pick = re => (ua.match(re) || [])[1] || "";
+  const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  let name = "不明", ver = "";
+  if (/EdgiOS\//.test(ua)) { name = "Edge(iOS)"; ver = pick(/EdgiOS\/([\d.]+)/); }
+  else if (/CriOS\//.test(ua)) { name = "Chrome(iOS)"; ver = pick(/CriOS\/([\d.]+)/); }
+  else if (/FxiOS\//.test(ua)) { name = "Firefox(iOS)"; ver = pick(/FxiOS\/([\d.]+)/); }
+  else if (/Edg\//.test(ua)) { name = "Edge"; ver = pick(/Edg\/([\d.]+)/); }
+  else if (/OPR\//.test(ua)) { name = "Opera"; ver = pick(/OPR\/([\d.]+)/); }
+  else if (/SamsungBrowser\//.test(ua)) { name = "Samsung Internet"; ver = pick(/SamsungBrowser\/([\d.]+)/); }
+  else if (/Firefox\//.test(ua)) { name = "Firefox"; ver = pick(/Firefox\/([\d.]+)/); }
+  else if (/Chrome\//.test(ua)) { name = navigator.brave ? "Brave" : "Chrome"; ver = pick(/Chrome\/([\d.]+)/); }
+  else if (/Safari\//.test(ua)) { name = "Safari"; ver = pick(/Version\/([\d.]+)/); }
+  const os = ios ? "iOS" : /Android/.test(ua) ? "Android" : /Mac OS X/.test(ua) ? "macOS"
+    : /Windows/.test(ua) ? "Windows" : /CrOS/.test(ua) ? "ChromeOS" : /Linux/.test(ua) ? "Linux" : "不明";
+  return { name, ver: ver.split(".")[0], os };
+}
+const ENV = detectBrowser();
+let probe = null;
+try { probe = SR ? new SR() : null; } catch (e) { probe = null; }
+const HAS_LOCAL = !!probe && "processLocally" in probe;
+const HAS_PHRASES = !!probe && "phrases" in probe && typeof window.SpeechRecognitionPhrase === "function";
+const HAS_AVAILABLE = !!SR && typeof SR.available === "function";
+
+/* ---------- 画面の参照 ---------- */
+const $ = id => document.getElementById(id);
+const el = {
+  envbar: $("envbar"), scriptSel: $("scriptSel"), scriptNote: $("scriptNote"), readView: $("readView"),
+  readText: $("readText"), editBox: $("editBox"),
+  optContinuous: $("optContinuous"), optInterim: $("optInterim"), optRestart: $("optRestart"), optLocal: $("optLocal"),
+  lblLocal: $("lblLocal"), langSel: $("langSel"), labelIn: $("labelIn"), phrasesIn: $("phrasesIn"),
+  btnCheckLocal: $("btnCheckLocal"), btnInstallLocal: $("btnInstallLocal"), localStatus: $("localStatus"),
+  btnStart: $("btnStart"), btnStop: $("btnStop"), btnAbort: $("btnAbort"),
+  dot: $("dot"), statusText: $("statusText"), notice: $("notice"), live: $("live"),
+  metrics: $("metrics"), diff: $("diff"), log: $("log"),
+  summaryWrap: $("summaryWrap"), runsWrap: $("runsWrap"),
+  btnCopySheet: $("btnCopySheet"), btnExportJson: $("btnExportJson"), btnExportCsv: $("btnExportCsv"), btnImport: $("btnImport"),
+  importIn: $("importIn"), btnClear: $("btnClear"),
+};
+
+function chip(text, cls) {
+  const c = document.createElement("span");
+  c.className = "chip" + (cls ? " " + cls : "");
+  c.textContent = text;
+  return c;
+}
+function renderEnv() {
+  el.envbar.replaceChildren(
+    chip(`${ENV.name} ${ENV.ver} / ${ENV.os}`),
+    SR ? chip(window.SpeechRecognition ? "SpeechRecognition あり" : "webkitSpeechRecognition あり", "good")
+       : chip("音声認識 非対応", "bad"),
+    chip(HAS_LOCAL ? "端末内処理 対応" : "端末内処理 なし", HAS_LOCAL ? "good" : ""),
+    chip(HAS_PHRASES ? "phrases 対応" : "phrases なし", HAS_PHRASES ? "good" : ""),
+    chip(window.isSecureContext ? "安全な接続" : "安全でない接続（マイク不可）", window.isSecureContext ? "" : "bad"),
+  );
+  if (!HAS_LOCAL) {
+    el.optLocal.disabled = true; el.lblLocal.classList.add("disabled");
+  }
+  if (!HAS_PHRASES) el.phrasesIn.disabled = true;
+  if (!HAS_AVAILABLE) {
+    el.btnCheckLocal.disabled = true;
+    el.localStatus.textContent = "このブラウザは端末内モデルの確認（SpeechRecognition.available）に対応していません。";
+  }
+  if (!SR) {
+    el.btnStart.disabled = true;
+    showNotice("このブラウザは Web Speech API の音声認識に対応していません（Firefox は設定フラグを有効にした場合のみ）。", true);
+  }
+}
+
+/* ---------- 原稿の表示 ---------- */
+function currentScript() { return SCRIPTS.find(s => s.id === el.scriptSel.value) || SCRIPTS[0]; }
+function currentRead() { return el.readText.value.trim(); }
+function renderRead() {
+  const read = currentRead();
+  el.readView.replaceChildren();
+  if (!read) { el.readView.textContent = "（原稿が空です。「原稿を編集する」で入力してください）"; return; }
+  for (const part of read.split(/(［[^］]*］)/)) {
+    if (!part) continue;
+    const m = part.match(/^［([^］]*)］$/);
+    if (m) { const s = document.createElement("span"); s.className = "filler"; s.textContent = m[1]; el.readView.append(s); }
+    else el.readView.append(document.createTextNode(part));
+  }
+}
+function selectScript(id) {
+  el.scriptSel.value = id;
+  const s = currentScript();
+  el.scriptNote.textContent = s.note;
+  if (s.id !== "custom") el.readText.value = s.read;
+  else el.editBox.open = true;
+  renderRead();
+}
+for (const s of SCRIPTS) {
+  const o = document.createElement("option"); o.value = s.id; o.textContent = s.name; el.scriptSel.append(o);
+}
+el.scriptSel.addEventListener("change", () => selectScript(el.scriptSel.value));
+el.readText.addEventListener("input", () => {
+  if (el.scriptSel.value !== "custom") { el.scriptSel.value = "custom"; el.scriptNote.textContent = SCRIPTS.at(-1).note; }
+  renderRead();
+});
+
+/* ---------- 端末内モデル ---------- */
+async function checkLocal() {
+  el.localStatus.textContent = "確認中…";
+  try {
+    const st = await SR.available({ langs: [el.langSel.value || "ja-JP"], processLocally: true });
+    const label = { available: "利用可能", downloadable: "ダウンロードが必要", downloading: "ダウンロード中", unavailable: "このブラウザでは利用不可" }[st] || st;
+    el.localStatus.textContent = `端末内モデル（${el.langSel.value || "ja-JP"}）：${label}`;
+    el.btnInstallLocal.hidden = st !== "downloadable";
+  } catch (e) {
+    el.localStatus.textContent = "確認できませんでした：" + (e && e.message ? e.message : e);
+  }
+}
+async function installLocal() {
+  el.localStatus.textContent = "ダウンロードを開始しています…";
+  try {
+    const ok = await SR.install({ langs: [el.langSel.value || "ja-JP"], processLocally: true });
+    el.localStatus.textContent = ok ? "ダウンロードを受け付けました。少し待ってから再確認してください。" : "ダウンロードできませんでした。";
+  } catch (e) {
+    el.localStatus.textContent = "ダウンロードできませんでした：" + (e && e.message ? e.message : e);
+  }
+}
+el.btnCheckLocal.addEventListener("click", checkLocal);
+el.btnInstallLocal.addEventListener("click", installLocal);
+
+/* ---------- 計測 ---------- */
+let run = null;
+const now = () => performance.now();
+
+function showNotice(text, bad) { el.notice.hidden = !text; el.notice.textContent = text || ""; el.notice.className = "notice" + (bad ? " bad" : ""); }
+function setStatus(text, on) { el.statusText.textContent = text; el.dot.classList.toggle("on", !!on); }
+function logEvent(type, detail) {
+  if (!run) return;
+  const t = Math.round(now() - run.t0);
+  run.events.push({ t, type, detail: detail || "" });
+  el.log.textContent += `${String(t).padStart(6, " ")}ms  ${type}${detail ? "  " + detail : ""}\n`;
+  el.log.scrollTop = el.log.scrollHeight;
+}
+
+const ERROR_TEXT = {
+  "not-allowed": "マイクの使用が許可されていません。アドレスバーのマイク設定を確認してください。",
+  "service-not-allowed": "このブラウザでは音声認識サービスが使えません（Brave・Vivaldi・Electron などは Google の音声サービスを使えません）。",
+  "network": "音声認識サービスに接続できませんでした。ネットワーク、またはブラウザ側の障害の可能性があります。",
+  "language-not-supported": "この言語は使えません。端末内処理の場合はモデルのダウンロードが必要です。",
+  "audio-capture": "マイクが見つかりません。",
+  "phrases-not-supported": "このモードでは phrases（認識させたい語）が使えません。",
+};
+
+function buildRecognizer() {
+  const rec = new SR();
+  if (el.langSel.value) rec.lang = el.langSel.value;
+  rec.continuous = el.optContinuous.checked;
+  rec.interimResults = el.optInterim.checked;
+  rec.maxAlternatives = 1;
+  if (HAS_LOCAL && el.optLocal.checked) rec.processLocally = true;
+  const words = el.phrasesIn.value.split(/[,、，]/).map(s => s.trim()).filter(Boolean);
+  if (HAS_PHRASES && words.length) {
+    try { rec.phrases = words.map(w => new SpeechRecognitionPhrase(w, 5.0)); }
+    catch (e) { logEvent("phrases設定失敗", String(e && e.message || e)); }
+  }
+  for (const type of ["audiostart", "soundstart", "speechstart", "speechend", "soundend", "audioend"]) {
+    rec.addEventListener(type, () => {
+      logEvent(type);
+      if (!run.marks[type]) run.marks[type] = now();
+    });
+  }
+  rec.onstart = () => { logEvent("start", `セッション${run.session}`); if (!run.marks.start) run.marks.start = now(); setStatus("認識中", true); };
+  rec.onnomatch = () => logEvent("nomatch");
+  rec.onerror = e => {
+    logEvent("error", e.error + (e.message ? " / " + e.message : ""));
+    if (e.error !== "aborted" && e.error !== "no-speech") run.errors.push(e.error);
+    if (e.error === "no-speech") run.noSpeech++;
+    if (ERROR_TEXT[e.error]) showNotice(ERROR_TEXT[e.error], true);
+    if (["not-allowed", "service-not-allowed", "language-not-supported", "audio-capture"].includes(e.error)) run.fatal = true;
+  };
+  rec.onresult = onResult;
+  rec.onend = onEnd;
+  return rec;
+}
+
+function onResult(e) {
+  const t = now();
+  if (run.firstResultAt == null) run.firstResultAt = t;
+  for (let k = e.resultIndex; k < e.results.length; k++) {
+    const r = e.results[k];
+    const text = r[0] ? r[0].transcript : "";
+    const key = run.session + ":" + k;
+    let seg = run.segs.get(key);
+    if (!seg) { seg = { first: t, last: t, text: "", final: false }; run.segs.set(key, seg); run.order.push(key); }
+    if (!r.isFinal && text !== seg.text) seg.last = t;
+    seg.text = text;
+    if (r.isFinal && !seg.final) {
+      seg.final = true; seg.finalAt = t; seg.conf = r[0].confidence;
+      logEvent("final", `「${text}」`);
+    }
+  }
+  // 途中結果は複数に分かれて届き、確定時に 1 つにまとまることがある。
+  // 今回のリストより後ろに残った古い途中結果は消す（残すと最後の文が二重になる）。
+  for (let k = e.results.length; ; k++) {
+    const key = run.session + ":" + k;
+    if (!run.segs.has(key)) break;
+    run.segs.delete(key);
+    run.order = run.order.filter(x => x !== key);
+  }
+  renderLive();
+}
+
+function renderLive() {
+  el.live.replaceChildren();
+  let any = false;
+  for (const key of run.order) {
+    const seg = run.segs.get(key);
+    if (!seg.text) continue;
+    any = true;
+    const s = document.createElement("span");
+    if (!seg.final) s.className = "interim";
+    s.textContent = seg.text;
+    el.live.append(s);
+  }
+  if (!any) {
+    const p = document.createElement("span"); p.className = "placeholder"; p.textContent = "聞き取り中…"; el.live.append(p);
+  }
+}
+
+function onEnd() {
+  logEvent("end", `セッション${run.session}`);
+  if (run.state === "stopping" || run.state === "aborting") { finishRun(); return; }
+  run.autoEnds++;
+  if (el.optRestart.checked && !run.fatal) {
+    run.session++; run.restarts++;
+    try { run.rec = buildRecognizer(); run.rec.start(); logEvent("再開", `セッション${run.session}`); return; }
+    catch (e) { logEvent("再開失敗", String(e && e.message || e)); }
+  }
+  setStatus("自動で終了しました", false);
+  finishRun();
+}
+
+function startRun() {
+  if (!currentRead()) { showNotice("原稿が空です。「原稿を編集する」で文を入力してください。", true); return; }
+  showNotice("");
+  el.log.textContent = "";
+  run = {
+    t0: now(), state: "running", session: 1, segs: new Map(), order: [], marks: {},
+    firstResultAt: null, autoEnds: 0, restarts: 0, errors: [], noSpeech: 0, fatal: false,
+    events: [], read: currentRead(), scriptId: el.scriptSel.value, scriptName: currentScript().name,
+    opts: { lang: el.langSel.value || "(未指定)", continuous: el.optContinuous.checked, interim: el.optInterim.checked,
+            local: HAS_LOCAL && el.optLocal.checked, phrases: HAS_PHRASES && !!el.phrasesIn.value.trim() },
+  };
+  try { run.rec = buildRecognizer(); run.rec.start(); logEvent("start()呼び出し"); }
+  catch (e) { showNotice("開始できませんでした：" + (e && e.message || e), true); run = null; return; }
+  el.btnStart.disabled = true; el.btnStop.disabled = false; el.btnAbort.disabled = false;
+  setStatus("マイクを準備中", true);
+  renderLive();
+}
+
+function stopRun() {
+  if (!run || run.state !== "running") return;
+  run.state = "stopping"; run.stopAt = now();
+  logEvent("stop()呼び出し");
+  setStatus("確定を待っています", true);
+  el.btnStop.disabled = true;
+  try { run.rec.stop(); } catch (e) { finishRun(); return; }
+  // iOS Safari などで end が来ない場合の保険
+  run.guard = setTimeout(() => { if (run && run.state === "stopping") { logEvent("end未着", "5秒で打ち切り"); run.endMissing = true; try { run.rec.abort(); } catch (e) {} finishRun(); } }, 5000);
+}
+
+function abortRun() {
+  if (!run) return;
+  run.state = "aborting"; run.discard = true;
+  try { run.rec.abort(); } catch (e) {}
+  finishRun();
+}
+
+const median = arr => { const a = arr.filter(x => x != null).sort((x, y) => x - y); if (!a.length) return null; const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
+const mean = arr => { const a = arr.filter(x => x != null); return a.length ? a.reduce((x, y) => x + y, 0) / a.length : null; };
+
+function finishRun() {
+  if (!run || run.finished) return;
+  run.finished = true;
+  clearTimeout(run.guard);
+  const r = run;
+  run = null;
+  el.btnStart.disabled = !SR; el.btnStop.disabled = true; el.btnAbort.disabled = true;
+  if (r.discard) { setStatus("破棄しました", false); return; }
+  setStatus("待機中", false);
+
+  const endAt = now();
+  const segs = r.order.map(k => r.segs.get(k)).filter(s => s.text);
+  const finals = segs.filter(s => s.final);
+  const pending = segs.filter(s => !s.final);
+  const hypRaw = segs.map(s => s.text).join("");
+  const speechAnchor = r.marks.speechstart || r.marks.soundstart || r.marks.audiostart || r.t0;
+  const lastFinal = finals.length ? Math.max(...finals.map(s => s.finalAt)) : null;
+
+  const ev = evaluate(r.read, hypRaw);
+  const record = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    at: new Date().toISOString(),
+    label: el.labelIn.value.trim() || `${ENV.name} ${ENV.ver} / ${ENV.os}`,
+    browser: ENV.name, browserVer: ENV.ver, os: ENV.os, ua: navigator.userAgent,
+    mode: r.opts.local ? "端末内" : "既定",
+    opts: r.opts,
+    scriptId: r.scriptId, scriptName: r.scriptName,
+    read: r.read, ref: ev.refText, hyp: hypRaw,
+    refLen: ev.refLen, cer: ev.cer, sub: ev.sub, del: ev.del, ins: ev.ins,
+    punct: ev.punct, fillers: ev.fillers,
+    timing: {
+      startup: r.marks.audiostart ? Math.round(r.marks.audiostart - r.t0) : null,
+      firstResult: r.firstResultAt ? Math.round(r.firstResultAt - speechAnchor) : null,
+      finalizeMedian: r.opts.interim ? (median(finals.map(s => s.finalAt - s.last)) ?? null) : null,
+      stopToFinal: r.stopAt && lastFinal && lastFinal > r.stopAt ? Math.round(lastFinal - r.stopAt) : (r.stopAt ? 0 : null),
+      stopToEnd: r.stopAt ? Math.round(endAt - r.stopAt) : null,
+      duration: Math.round(endAt - r.t0),
+    },
+    confidence: mean(finals.map(s => s.conf).filter(c => c > 0)),
+    finals: finals.length, pending: pending.length,
+    autoEnds: r.autoEnds, restarts: r.restarts, errors: r.errors, noSpeech: r.noSpeech,
+    endMissing: !!r.endMissing,
+  };
+  if (record.timing.finalizeMedian != null) record.timing.finalizeMedian = Math.round(record.timing.finalizeMedian);
+
+  if (!hypRaw) {
+    showNotice("認識結果がありませんでした。マイクの許可・言語設定・ネットワークを確認してください。この試行は記録していません。", true);
+    return;
+  }
+  renderResult(record, ev.ops);
+  runs.push(record);
+  saveRuns();
+  renderTables();
+}
+
+el.btnStart.addEventListener("click", startRun);
+el.btnStop.addEventListener("click", stopRun);
+el.btnAbort.addEventListener("click", abortRun);
+
+/* ---------- 結果の表示 ---------- */
+const pct = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
+const ms = v => v == null ? "—" : Math.round(v).toLocaleString() + "ms";
+const f2 = v => v == null ? "—" : v.toFixed(2);
+const gradeCer = v => v == null ? "" : v <= 0.05 ? "good" : v <= 0.12 ? "warn" : "bad";
+const gradeF1 = v => v == null ? "" : v >= 0.7 ? "good" : v >= 0.4 ? "warn" : "bad";
+const gradeFill = (out, spoken) => !spoken ? (out ? "warn" : "") : out === 0 ? "good" : out < spoken ? "warn" : "bad";
+const gradeMs = (v, g, w) => v == null ? "" : v <= g ? "good" : v <= w ? "warn" : "bad";
+
+function metricCard(k, v, s, cls) {
+  const d = document.createElement("div"); d.className = "metric";
+  const a = document.createElement("span"); a.className = "k"; a.textContent = k;
+  const b = document.createElement("span"); b.className = "v" + (cls ? " " + cls : ""); b.textContent = v;
+  d.append(a, b);
+  if (s) { const c = document.createElement("span"); c.className = "s"; c.textContent = s; d.append(c); }
+  return d;
+}
+
+function renderResult(rec, ops) {
+  const p = rec.punct;
+  const types = Object.entries(p.byType).map(([k, v]) => `${k}${v}`).join(" ") || "なし";
+  el.metrics.replaceChildren(
+    metricCard("誤字脱字率", pct(rec.cer), `誤字${rec.sub} 脱字${rec.del} 余分${rec.ins} / ${rec.refLen}字`, gradeCer(rec.cer)),
+    metricCard("句読点 F1", f2(p.F1), `出力 ${p.hyp} / 正解 ${p.ref}（位置一致 ${p.tp}）`, gradeF1(p.F1)),
+    metricCard("出た句読点", types, p.hyp ? `種類も一致 ${p.typeOk}` : "句読点は出力されていません", p.hyp ? "" : "bad"),
+    metricCard("フィラー", `${rec.fillers.out} / ${rec.fillers.spoken}`, rec.fillers.words.length ? "残った語：" + rec.fillers.words.join("・") : "結果に残った数 / 読んだ数", gradeFill(rec.fillers.out, rec.fillers.spoken)),
+    metricCard("話し始め→初回表示", ms(rec.timing.firstResult), "最初の文字が出るまで", gradeMs(rec.timing.firstResult, 800, 1600)),
+    metricCard("確定までの待ち", ms(rec.timing.finalizeMedian), rec.opts.interim ? "途中結果の最終更新→確定（中央値）" : "途中結果オフのため測れません", gradeMs(rec.timing.finalizeMedian, 600, 1500)),
+    metricCard("停止→終了", ms(rec.timing.stopToEnd), `起動 ${ms(rec.timing.startup)}`, gradeMs(rec.timing.stopToEnd, 800, 2000)),
+    metricCard("自動終了・エラー", `${rec.autoEnds} / ${rec.errors.length}`, [rec.errors.join(", "), rec.pending ? `未確定 ${rec.pending}区間` : "", rec.endMissing ? "end が届かず" : ""].filter(Boolean).join(" ・ ") || "途中で切れた回数 / エラー数", rec.errors.length || rec.endMissing ? "bad" : rec.autoEnds ? "warn" : "good"),
+  );
+  el.diff.replaceChildren();
+  for (const op of ops) {
+    if (op.t === "eq") el.diff.append(document.createTextNode(op.r));
+    else if (op.t === "sub") { const s = document.createElement("span"); s.className = "sub"; s.textContent = op.h; s.title = `正解：${op.r}`; el.diff.append(s); }
+    else if (op.t === "del") { const s = document.createElement("del"); s.textContent = op.r; s.title = "認識されなかった文字"; el.diff.append(s); }
+    else { const s = document.createElement("ins"); s.textContent = op.h; s.title = "余分に出た文字"; el.diff.append(s); }
+  }
+}
+
+/* ---------- 記録 ---------- */
+const STORE = "speech-bench.runs.v1";
+let runs = [];
+function loadRuns() { try { runs = JSON.parse(localStorage.getItem(STORE) || "[]"); } catch (e) { runs = []; } }
+function saveRuns() { try { localStorage.setItem(STORE, JSON.stringify(runs)); } catch (e) {} }
+
+function td(text, cls) { const c = document.createElement("td"); c.textContent = text; if (cls) c.className = cls; return c; }
+function table(headers, rows) {
+  const t = document.createElement("table");
+  const thead = document.createElement("thead"); const tr = document.createElement("tr");
+  for (const h of headers) { const th = document.createElement("th"); th.textContent = h; tr.append(th); }
+  thead.append(tr); t.append(thead);
+  const tb = document.createElement("tbody"); for (const r of rows) tb.append(r); t.append(tb);
+  return t;
+}
+
+function renderTables() {
+  if (!runs.length) {
+    const msg = '<div class="empty">まだ記録がありません。試行すると、ここにブラウザごとの平均が並びます。他のブラウザの結果は「読み込み」で追加できます。</div>';
+    el.summaryWrap.innerHTML = msg; el.runsWrap.innerHTML = msg; return;
+  }
+  // ブラウザ（記録名）× モード ごとに集計
+  const groups = new Map();
+  for (const r of runs) {
+    const k = r.label + "｜" + r.mode;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  }
+  const sumRows = [];
+  for (const [k, rs] of groups) {
+    const [label, mode] = k.split("｜");
+    const cer = mean(rs.map(r => r.cer));
+    const f1 = mean(rs.map(r => r.punct.F1));
+    const pHyp = rs.reduce((a, r) => a + r.punct.hyp, 0), pRef = rs.reduce((a, r) => a + r.punct.ref, 0);
+    const fOut = rs.reduce((a, r) => a + r.fillers.out, 0), fSp = rs.reduce((a, r) => a + r.fillers.spoken, 0);
+    const first = median(rs.map(r => r.timing.firstResult));
+    const fin = median(rs.map(r => r.timing.finalizeMedian));
+    const stop = median(rs.map(r => r.timing.stopToEnd));
+    const autoEnds = rs.reduce((a, r) => a + r.autoEnds, 0);
+    const errs = rs.reduce((a, r) => a + r.errors.length + (r.endMissing ? 1 : 0), 0);
+    const tr = document.createElement("tr");
+    tr.append(
+      td(label), td(mode), td(String(rs.length), "num"),
+      td(pct(cer), "num " + gradeCer(cer)),
+      td(f2(f1), "num " + gradeF1(f1)),
+      td(`${pHyp} / ${pRef}`, "num" + (pHyp === 0 ? " bad" : "")),
+      td(fSp ? `${fOut} / ${fSp}` : (fOut ? String(fOut) : "—"), "num " + gradeFill(fOut, fSp)),
+      td(ms(first), "num " + gradeMs(first, 800, 1600)),
+      td(ms(fin), "num " + gradeMs(fin, 600, 1500)),
+      td(ms(stop), "num " + gradeMs(stop, 800, 2000)),
+      td(String(autoEnds), "num" + (autoEnds ? " warn" : "")),
+      td(String(errs), "num" + (errs ? " bad" : "")),
+    );
+    sumRows.push(tr);
+  }
+  el.summaryWrap.replaceChildren(table(
+    ["記録名", "モード", "試行", "誤字脱字率", "句読点F1", "句読点 出力/正解", "フィラー 残/読", "初回表示", "確定待ち", "停止→終了", "自動終了", "エラー"],
+    sumRows));
+
+  const rows = [...runs].reverse().map(r => {
+    const tr = document.createElement("tr");
+    const del = document.createElement("button"); del.type = "button"; del.textContent = "削除"; del.className = "small";
+    del.addEventListener("click", () => { runs = runs.filter(x => x.id !== r.id); saveRuns(); renderTables(); });
+    const tdDel = document.createElement("td"); tdDel.append(del);
+    tr.append(
+      td(new Date(r.at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })),
+      td(r.label), td(r.mode), td(r.scriptName),
+      td(pct(r.cer), "num " + gradeCer(r.cer)),
+      td(f2(r.punct.F1), "num " + gradeF1(r.punct.F1)),
+      td(`${r.punct.hyp} / ${r.punct.ref}`, "num"),
+      td(r.fillers.spoken ? `${r.fillers.out} / ${r.fillers.spoken}` : String(r.fillers.out || "—"), "num " + gradeFill(r.fillers.out, r.fillers.spoken)),
+      td(ms(r.timing.firstResult), "num"), td(ms(r.timing.finalizeMedian), "num"), td(ms(r.timing.stopToEnd), "num"),
+      td(`${r.autoEnds} / ${r.errors.length}`, "num"),
+      td(r.hyp, "hyp"),
+      tdDel,
+    );
+    return tr;
+  });
+  el.runsWrap.replaceChildren(table(
+    ["日時", "記録名", "モード", "原稿", "誤字脱字率", "句読点F1", "句読点", "フィラー", "初回表示", "確定待ち", "停止→終了", "自動終了/エラー", "認識結果", ""],
+    rows));
+}
+
+/* ---------- 書き出し・読み込み ---------- */
+function download(name, text, type) {
+  const blob = new Blob([text], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+el.btnExportJson.addEventListener("click", () => {
+  download(`speech-bench_${ENV.name}_${stamp()}.json`, JSON.stringify(runs, null, 2), "application/json");
+});
+// スプレッドシート「試行ログ」タブの A〜Z 列と同じ並び
+const pad2 = n => String(n).padStart(2, "0");
+const localTime = iso => { const d = new Date(iso); return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const COLS = [
+  ["日時", r => localTime(r.at)], ["記録名", r => r.label], ["ブラウザ", r => r.browser], ["版", r => r.browserVer], ["OS", r => r.os],
+  ["モード", r => r.mode], ["原稿", r => r.scriptName], ["誤字脱字率", r => r.cer], ["誤字", r => r.sub], ["脱字", r => r.del], ["余分", r => r.ins],
+  ["正解文字数", r => r.refLen], ["句読点F1", r => r.punct.F1], ["句読点（出力）", r => r.punct.hyp], ["句読点（正解）", r => r.punct.ref],
+  ["フィラー（残）", r => r.fillers.out], ["フィラー（読）", r => r.fillers.spoken],
+  ["初回表示(ms)", r => r.timing.firstResult], ["確定待ち(ms)", r => r.timing.finalizeMedian], ["停止→終了(ms)", r => r.timing.stopToEnd],
+  ["起動(ms)", r => r.timing.startup], ["自動終了(回)", r => r.autoEnds], ["エラー", r => r.errors.join(" ")],
+  ["confidence", r => r.confidence], ["正解", r => r.ref], ["認識結果", r => r.hyp],
+];
+el.btnExportCsv.addEventListener("click", () => {
+  const esc = v => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lines = [COLS.map(c => c[0]).join(",")].concat(runs.map(r => COLS.map(c => esc(c[1](r))).join(",")));
+  download(`speech-bench_${stamp()}.csv`, "﻿" + lines.join("\r\n"), "text/csv");
+});
+
+// まだ貼り付けていない試行を、見出しなしのタブ区切りでコピーする
+el.btnCopySheet.addEventListener("click", async () => {
+  const pending = runs.filter(r => !r.sheetCopied);
+  if (!pending.length) { showNotice("スプレッドシートに貼り付けていない試行はありません。"); return; }
+  const cell = v => v == null ? "" : String(v).replace(/[\t\r\n]+/g, " ");
+  const tsv = pending.map(r => COLS.map(c => cell(c[1](r))).join("\t")).join("\n");
+  try {
+    await navigator.clipboard.writeText(tsv);
+  } catch (e) {
+    showNotice("コピーできませんでした。ブラウザのクリップボードの許可を確認してください。", true);
+    return;
+  }
+  pending.forEach(r => { r.sheetCopied = true; });
+  saveRuns(); renderTables();
+  showNotice(`${pending.length} 件をコピーしました。スプレッドシートの「試行ログ」タブで、A 列の最終行の下のセルを選んで貼り付けてください。`);
+});
+el.btnImport.addEventListener("click", () => el.importIn.click());
+el.importIn.addEventListener("change", async () => {
+  let added = 0;
+  const known = new Set(runs.map(r => r.id));
+  for (const f of el.importIn.files) {
+    try {
+      const data = JSON.parse(await f.text());
+      for (const r of Array.isArray(data) ? data : []) {
+        if (r && r.id && r.punct && r.timing && !known.has(r.id)) { runs.push(r); known.add(r.id); added++; }
+      }
+    } catch (e) { showNotice(`${f.name} を読み込めませんでした。書き出した JSON ファイルを選んでください。`, true); }
+  }
+  el.importIn.value = "";
+  runs.sort((a, b) => a.at.localeCompare(b.at));
+  saveRuns(); renderTables();
+  if (added) showNotice(`${added} 件の試行を追加しました。`);
+});
+el.btnClear.addEventListener("click", () => {
+  if (el.btnClear.dataset.armed) {
+    runs = []; saveRuns(); renderTables();
+    delete el.btnClear.dataset.armed; el.btnClear.textContent = "記録を消去";
+  } else {
+    el.btnClear.dataset.armed = "1"; el.btnClear.textContent = "もう一度押すと全件消去";
+    setTimeout(() => { delete el.btnClear.dataset.armed; el.btnClear.textContent = "記録を消去"; }, 4000);
+  }
+});
+
+/* ---------- 起動 ---------- */
+el.labelIn.value = `${ENV.name} ${ENV.ver} / ${ENV.os}`;
+renderEnv();
+selectScript("talk");
+loadRuns();
+renderTables();
+window.__bench = { evaluate, analyze }; // 検証用
+</script>
+</body>
+</html>
