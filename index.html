@@ -206,6 +206,7 @@ td.hyp { white-space: normal; min-width: 18em; max-width: 34em; font-size: 13px;
         <label><input type="checkbox" id="optInterim" checked> 途中結果を表示（interimResults）</label>
         <label><input type="checkbox" id="optRestart" checked> 自動終了したら再開する</label>
         <label id="lblLocal"><input type="checkbox" id="optLocal"> 端末内で処理（processLocally）</label>
+        <label id="lblPunct"><input type="checkbox" id="optPunct"> 句読点を自動で付ける（unspokenPunctuation）</label>
       </div>
 
       <div class="row">
@@ -333,7 +334,8 @@ const SCRIPTS = [
 /* ---------- 文字列処理 ---------- */
 const PUNCT = { "、": "、", ",": "、", "。": "。", ".": "。", "?": "？", "!": "！" };
 const SKIP = /[\s「」『』（）()［］\[\]【】・:：;；"'“”‘’…]/u;
-const FILLER_RE = /(?:えーっと|えーと|ええと|えっと|あのー+|あのう|あの〜|うーん|んー+|えー+|エーット|エート|エー+|アノー+)[、,]?\s*/gu;
+// 「あの」「ええ」は普通の言葉でもあるので、直後に読点・空白がある場合だけフィラーとみなす
+const FILLER_RE = /(?:えーっと|えーと|ええと|えっと|あのー+|あのう|あの〜|あの(?=[、,\s])|うーん|んー+|えー+|ええ(?=[、,\s])|エーット|エート|エー+|アノー+)[、,]?\s*/gu;
 
 function refFromRead(read) { return read.replace(/［[^］]*］[、,]?/g, ""); }
 function countMarkedFillers(read) { return (read.match(/［[^］]*］/g) || []).length; }
@@ -455,6 +457,7 @@ let probe = null;
 try { probe = SR ? new SR() : null; } catch (e) { probe = null; }
 const HAS_LOCAL = !!probe && "processLocally" in probe;
 const HAS_PHRASES = !!probe && "phrases" in probe && typeof window.SpeechRecognitionPhrase === "function";
+const HAS_PUNCT = !!probe && "unspokenPunctuation" in probe;
 const HAS_AVAILABLE = !!SR && typeof SR.available === "function";
 
 /* ---------- 画面の参照 ---------- */
@@ -463,7 +466,7 @@ const el = {
   envbar: $("envbar"), scriptSel: $("scriptSel"), scriptNote: $("scriptNote"), readView: $("readView"),
   readText: $("readText"), editBox: $("editBox"),
   optContinuous: $("optContinuous"), optInterim: $("optInterim"), optRestart: $("optRestart"), optLocal: $("optLocal"),
-  lblLocal: $("lblLocal"), langSel: $("langSel"), labelIn: $("labelIn"), phrasesIn: $("phrasesIn"),
+  lblLocal: $("lblLocal"), optPunct: $("optPunct"), lblPunct: $("lblPunct"), langSel: $("langSel"), labelIn: $("labelIn"), phrasesIn: $("phrasesIn"),
   btnCheckLocal: $("btnCheckLocal"), btnInstallLocal: $("btnInstallLocal"), localStatus: $("localStatus"),
   btnStart: $("btnStart"), btnStop: $("btnStop"), btnAbort: $("btnAbort"),
   dot: $("dot"), statusText: $("statusText"), notice: $("notice"), live: $("live"),
@@ -486,12 +489,14 @@ function renderEnv() {
        : chip("音声認識 非対応", "bad"),
     chip(HAS_LOCAL ? "端末内処理 対応" : "端末内処理 なし", HAS_LOCAL ? "good" : ""),
     chip(HAS_PHRASES ? "phrases 対応" : "phrases なし", HAS_PHRASES ? "good" : ""),
+    chip(HAS_PUNCT ? "句読点の自動付与 対応" : "句読点の自動付与 なし", HAS_PUNCT ? "good" : ""),
     chip(window.isSecureContext ? "安全な接続" : "安全でない接続（マイク不可）", window.isSecureContext ? "" : "bad"),
   );
   if (!HAS_LOCAL) {
     el.optLocal.disabled = true; el.lblLocal.classList.add("disabled");
   }
   if (!HAS_PHRASES) el.phrasesIn.disabled = true;
+  if (!HAS_PUNCT) { el.optPunct.disabled = true; el.lblPunct.classList.add("disabled"); }
   if (!HAS_AVAILABLE) {
     el.btnCheckLocal.disabled = true;
     el.localStatus.textContent = "このブラウザは端末内モデルの確認（SpeechRecognition.available）に対応していません。";
@@ -587,6 +592,7 @@ function buildRecognizer() {
   rec.interimResults = el.optInterim.checked;
   rec.maxAlternatives = 1;
   if (HAS_LOCAL && el.optLocal.checked) rec.processLocally = true;
+  if (HAS_PUNCT && el.optPunct.checked) rec.unspokenPunctuation = true;
   const words = el.phrasesIn.value.split(/[,、，]/).map(s => s.trim()).filter(Boolean);
   if (HAS_PHRASES && words.length) {
     try { rec.phrases = words.map(w => new SpeechRecognitionPhrase(w, 5.0)); }
@@ -678,7 +684,7 @@ function startRun() {
     firstResultAt: null, autoEnds: 0, restarts: 0, errors: [], noSpeech: 0, fatal: false,
     events: [], read: currentRead(), scriptId: el.scriptSel.value, scriptName: currentScript().name,
     opts: { lang: el.langSel.value || "(未指定)", continuous: el.optContinuous.checked, interim: el.optInterim.checked,
-            local: HAS_LOCAL && el.optLocal.checked, phrases: HAS_PHRASES && !!el.phrasesIn.value.trim() },
+            local: HAS_LOCAL && el.optLocal.checked, punct: HAS_PUNCT && el.optPunct.checked, phrases: HAS_PHRASES && !!el.phrasesIn.value.trim() },
   };
   try { run.rec = buildRecognizer(); run.rec.start(); logEvent("start()呼び出し"); }
   catch (e) { showNotice("開始できませんでした：" + (e && e.message || e), true); run = null; return; }
@@ -732,7 +738,7 @@ function finishRun() {
     at: new Date().toISOString(),
     label: el.labelIn.value.trim() || `${ENV.name} ${ENV.ver} / ${ENV.os}`,
     browser: ENV.name, browserVer: ENV.ver, os: ENV.os, ua: navigator.userAgent,
-    mode: r.opts.local ? "端末内" : "既定",
+    mode: (r.opts.local ? "端末内" : "既定") + (r.opts.punct ? "＋句読点" : ""),
     opts: r.opts,
     scriptId: r.scriptId, scriptName: r.scriptName,
     read: r.read, ref: ev.refText, hyp: hypRaw,
@@ -907,12 +913,12 @@ const pad2 = n => String(n).padStart(2, "0");
 const localTime = iso => { const d = new Date(iso); return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
 const COLS = [
   ["日時", r => localTime(r.at)], ["記録名", r => r.label], ["ブラウザ", r => r.browser], ["版", r => r.browserVer], ["OS", r => r.os],
-  ["モード", r => r.mode], ["原稿", r => r.scriptName], ["誤字脱字率", r => r.cer], ["誤字", r => r.sub], ["脱字", r => r.del], ["余分", r => r.ins],
+  ["モード", r => r.mode], ["原稿", r => r.scriptName], ["読み上げた文章", r => r.read.replace(/［([^］]*)］/g, "$1")], ["誤字脱字率", r => r.cer], ["誤字", r => r.sub], ["脱字", r => r.del], ["余分", r => r.ins],
   ["正解文字数", r => r.refLen], ["句読点F1", r => r.punct.F1], ["句読点（出力）", r => r.punct.hyp], ["句読点（正解）", r => r.punct.ref],
   ["フィラー（残）", r => r.fillers.out], ["フィラー（読）", r => r.fillers.spoken],
   ["初回表示(ms)", r => r.timing.firstResult], ["確定待ち(ms)", r => r.timing.finalizeMedian], ["停止→終了(ms)", r => r.timing.stopToEnd],
   ["起動(ms)", r => r.timing.startup], ["自動終了(回)", r => r.autoEnds], ["エラー", r => r.errors.join(" ")],
-  ["confidence", r => r.confidence], ["正解", r => r.ref], ["認識結果", r => r.hyp],
+  ["confidence", r => r.confidence], ["認識結果", r => r.hyp],
 ];
 el.btnExportCsv.addEventListener("click", () => {
   const esc = v => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
