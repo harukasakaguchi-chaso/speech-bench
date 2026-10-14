@@ -585,6 +585,13 @@ const ERROR_TEXT = {
   "phrases-not-supported": "このモードでは phrases（認識させたい語）が使えません。",
 };
 
+// どの設定の組み合わせで「この言語は使えません」になったかを切り分けるための文言
+function languageErrorText(opts) {
+  const on = [opts.local && "端末内で処理", opts.punct && "句読点を自動で付ける", opts.phrases && "認識させたい語"].filter(Boolean);
+  if (!on.length) return "このブラウザでは、この言語の音声認識が使えません。";
+  return `「${on.join("」「")}」がオンの状態で「この言語は使えません」になりました。オプションを 1 つずつオフにして、どれが原因かを確かめてください。`;
+}
+
 function buildRecognizer() {
   const rec = new SR();
   if (el.langSel.value) rec.lang = el.langSel.value;
@@ -610,7 +617,8 @@ function buildRecognizer() {
     logEvent("error", e.error + (e.message ? " / " + e.message : ""));
     if (e.error !== "aborted" && e.error !== "no-speech") run.errors.push(e.error);
     if (e.error === "no-speech") run.noSpeech++;
-    if (ERROR_TEXT[e.error]) showNotice(ERROR_TEXT[e.error], true);
+    if (e.error === "language-not-supported") showNotice(languageErrorText(run.opts), true);
+    else if (ERROR_TEXT[e.error]) showNotice(ERROR_TEXT[e.error], true);
     if (["not-allowed", "service-not-allowed", "language-not-supported", "audio-capture"].includes(e.error)) run.fatal = true;
   };
   rec.onresult = onResult;
@@ -675,9 +683,26 @@ function onEnd() {
   finishRun();
 }
 
-function startRun() {
+const LOCAL_STATUS_TEXT = {
+  downloadable: "日本語の端末内モデルがまだ入っていません。「日本語モデルをダウンロード」を押し、数分待ってから「端末内モデルを確認」で「利用可能」になったことを確かめてください。",
+  downloading: "日本語の端末内モデルをダウンロード中です。数分待ってから「端末内モデルを確認」を押してください。",
+  unavailable: "このブラウザでは日本語の端末内処理が使えません（会社の管理設定でモデルのダウンロードが止められている可能性があります）。「端末内で処理」をオフにして試してください。",
+};
+
+async function startRun() {
   if (!currentRead()) { showNotice("原稿が空です。「原稿を編集する」で文を入力してください。", true); return; }
   showNotice("");
+  if (HAS_LOCAL && el.optLocal.checked && HAS_AVAILABLE) {
+    let st;
+    try { st = await SR.available({ langs: [el.langSel.value || "ja-JP"], processLocally: true }); }
+    catch (e) { st = "unavailable"; }
+    el.localStatus.textContent = `端末内モデル（${el.langSel.value || "ja-JP"}）：${st}`;
+    if (st !== "available") {
+      el.btnInstallLocal.hidden = st !== "downloadable";
+      showNotice(LOCAL_STATUS_TEXT[st] || `端末内モデルの状態：${st}`, true);
+      return;
+    }
+  }
   el.log.textContent = "";
   run = {
     t0: now(), state: "running", session: 1, segs: new Map(), order: [], marks: {},
